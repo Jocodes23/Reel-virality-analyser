@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reels-trend-intel"
+version = "0.1.0"
+description = "Production-grade Instagram Reels trend-intelligence system: adaptive collection, gated/cached feature extraction, statistical trend modelling with calibrated persistence probabilities, and a downstream-agnostic versioned TrendReport."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "reels-trend-intel" }]
+
+# Core runtime deps: exactly what the OFFLINE golden path needs. Everything heavy
+# (GPU models, audio fingerprinting, OCR, Postgres, UMAP/HDBSCAN, DuckDB) is an
+# OPTIONAL extra with an automatic in-code fallback, so `pip install .` yields a
+# fully runnable system on a lean box and `pip install .[gpu,audio,...]` upgrades it.
+dependencies = [
+    "pydantic>=2.7",
+    "pydantic-settings>=2.2",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "scikit-learn>=1.3",      # provides sklearn.cluster.HDBSCAN (>=1.3)
+    "polars>=0.20",           # native Parquet write, no pyarrow needed
+    "aiosqlite>=0.20",        # default offline StorageBackend
+    "httpx>=0.27",            # async HTTP for live adapters
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "jinja2>=3.1",            # dashboard templating
+    "pillow>=10.0",          # image decode for color/phash
+    "structlog>=24.1",
+    "prometheus-client>=0.20",
+    "apscheduler>=3.10",
+]
+
+[project.optional-dependencies]
+gpu = ["torch>=2.1", "sentence-transformers>=2.6", "open-clip-torch>=2.24"]
+audio = ["librosa>=0.10", "pyacoustid>=1.3", "soundfile>=0.12"]
+ocr = ["rapidocr-onnxruntime>=1.3"]
+clustering = ["umap-learn>=0.5", "hdbscan>=0.8", "bertopic>=0.16"]
+postgres = ["asyncpg>=0.29", "pgvector>=0.2"]
+analytics = ["duckdb>=0.10", "pyarrow>=15.0"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "hypothesis>=6.100", "mypy>=1.9", "ruff>=0.4"]
+
+[project.scripts]
+rti = "reels_trend_intel.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["reels_trend_intel*"]
+
+[tool.setuptools.package-data]
+"reels_trend_intel" = ["api/templates/*.html", "fixtures/data/*.json"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+plugins = ["pydantic.mypy"]
+warn_unused_ignores = true
+disallow_untyped_defs = true
+ignore_missing_imports = true   # optional heavy deps are imported behind try/except
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

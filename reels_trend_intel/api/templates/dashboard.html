@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Reels Trend Intelligence</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+           margin: 0; padding: 24px; background: #0f1115; color: #e8eaed; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    .sub { color: #9aa0a6; font-size: 13px; margin-bottom: 18px; }
+    .grid { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+    .card { background: #181b22; border: 1px solid #262b36; border-radius: 10px;
+            padding: 12px 16px; min-width: 150px; }
+    .card .k { font-size: 11px; color: #9aa0a6; text-transform: uppercase; letter-spacing:.04em;}
+    .card .v { font-size: 20px; font-weight: 650; margin-top: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid #232833; }
+    th { color: #9aa0a6; font-weight: 600; position: sticky; top: 0; background: #0f1115; }
+    tr:hover td { background: #15181f; }
+    .pill { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .pre-peak { background:#10331f; color:#5ee08f; }
+    .peak { background:#33310f; color:#e6cf57; }
+    .decay { background:#331316; color:#e3737f; }
+    .ws { background:#10283a; color:#5cb3f0; }
+    .bar { height: 6px; border-radius: 4px; background:#262b36; position:relative; min-width:70px;}
+    .bar > span { position:absolute; left:0; top:0; bottom:0; border-radius:4px; background:#5ee08f; }
+    a { color:#7cc0ff; text-decoration:none; } a:hover { text-decoration: underline; }
+    .ci { color:#9aa0a6; font-size: 11px; }
+    code { color:#c8a6ff; }
+  </style>
+</head>
+<body>
+  <h1>Reels Trend Intelligence</h1>
+  <div class="sub">
+    niche: <code>{{ payload.niche }}</code> · ranked by <code>{{ payload.ranking_key }}</code>
+    · generated <code>{{ payload.generated_at }}</code>
+  </div>
+
+  <div class="grid">
+    <div class="card"><div class="k">Trends</div><div class="v">{{ trends|length }}</div></div>
+    <div class="card"><div class="k">Processed</div>
+      <div class="v">{{ metrics.get('processed', {}).values()|sum if metrics.get('processed') else '—' }}</div></div>
+    <div class="card"><div class="k">Whitespace</div>
+      <div class="v">{{ trends|selectattr('is_whitespace')|list|length }}</div></div>
+    <div class="card"><div class="k">Pre-peak</div>
+      <div class="v">{{ trends|selectattr('dynamics.phase','equalto','pre-peak')|list|length }}</div></div>
+  </div>
+
+  <table>
+    <thead><tr>
+      <th>#</th><th>Trend</th><th>Type</th><th>Phase</th><th>R(t)</th>
+      <th>Health</th><th>Persistence (95% CI)</th><th>Top reel</th><th>Audio</th><th></th>
+    </tr></thead>
+    <tbody>
+    {% for t in trends %}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td><strong>{{ t.identity.label }}</strong><br>
+            <span class="ci">{{ t.identity.size }} reels · {{ t.identity.trend_id }}</span></td>
+        <td>{{ t.identity.type }}</td>
+        <td><span class="pill {{ t.dynamics.phase }}">{{ t.dynamics.phase }}</span></td>
+        <td>{{ '%.2f'|format(t.dynamics.r_t) }}</td>
+        <td><div class="bar"><span style="width: {{ (t.health_score*100)|round }}%"></span></div>
+            <span class="ci">{{ '%.2f'|format(t.health_score) }}</span></td>
+        <td>{{ '%.0f'|format(t.dynamics.persistence_probability*100) }}%
+            <span class="ci">[{{ '%.0f'|format(t.dynamics.persistence_ci.low*100) }}–{{ '%.0f'|format(t.dynamics.persistence_ci.high*100) }}%]</span></td>
+        <td><a href="{{ t.headline_links.top_reel.url }}" target="_blank">{{ '{:,}'.format(t.headline_links.top_reel.plays) }} plays ↗</a></td>
+        <td><a href="{{ t.headline_links.audio.instagram_audio_url }}" target="_blank">{{ t.headline_links.audio.song_title or t.headline_links.audio.audio_id }} ↗</a></td>
+        <td>{% if t.is_whitespace %}<span class="pill ws">whitespace</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if not trends %}<p class="sub">No report yet — run <code>rti run-once</code>.</p>{% endif %}
+</body>
+</html>

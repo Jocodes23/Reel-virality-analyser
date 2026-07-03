@@ -1,0 +1,37 @@
+# secrets & local config
+.env
+*.env.local
+
+# data, db, exports, checkpoints
+data/
+*.db
+*.db-wal
+*.db-shm
+*.parquet
+*.jsonl
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# model weights cache
+.cache/
+*.onnx
+
+# large local artifacts — never commit (GitHub rejects >100 MB)
+*.whl
+*.pt
+*.bin
+*.safetensors
+# local GPU/serve helper scripts contain hardcoded machine paths
+run_gpu.py
+serve_gpu.py
+live_smoke.py
