@@ -161,6 +161,73 @@ class VLMAnalysis(BaseModel):
     structure: Structure
 
 
+# Marker for a free-text field the model did not answer. Visible on purpose — an
+# empty string would read as "the model said nothing about the craft", which is a
+# different claim from "the model never answered".
+NOT_SUPPLIED = "(not supplied by model)"
+
+# Neutral values used when a model omits a field. They are deliberately the
+# "don't know" member of each enum, and any confidence belonging to a defaulted
+# dimension is forced to 0.0 — we degrade, we never fabricate.
+_PARTIAL_DEFAULTS: dict[str, object] = {
+    "shot_class": ShotClass.MIXED,
+    "shot_description": NOT_SUPPLIED,
+    "shot_attributes": {
+        "camera_movement": CameraMovement.STATIC, "framing": Framing.MIXED,
+        "lighting": Lighting.NATURAL, "stabilisation_quality": 0.0, "angle_variety": 0.0,
+    },
+    "shot_confidence": 0.0,
+    "grade_class": GradeClass.UNGRADED,
+    "grade_description": NOT_SUPPLIED,
+    "grade_confidence": 0.0,
+    "archetype": Archetype.OTHER,
+    "archetype_confidence": 0.0,
+    "text_present": False,
+    "text_position": TextPosition.NONE,
+    "text_style": TextStyle.NONE,
+    "text_density": 0.0,
+    "structure": Structure.SINGLE_TAKE,
+}
+# Confidence that must be zeroed when its dimension was defaulted.
+_CONFIDENCE_OF: dict[str, str] = {
+    "shot_class": "shot_confidence",
+    "grade_class": "grade_confidence",
+    "archetype": "archetype_confidence",
+}
+
+
+def parse_lenient(raw: dict) -> tuple[VLMAnalysis, list[str]]:
+    """Build an analysis from a partial model response (graceful degradation).
+
+    Small local models routinely emit a subset of the schema. Rather than losing
+    the reel entirely we keep what was answered, fill the rest with neutral
+    defaults, zero the confidence of every defaulted dimension, and return the
+    list of missing fields so downstream can weight the row honestly.
+
+    Raises if the response is so degenerate that nothing usable was supplied.
+    """
+    payload = dict(raw)
+    missing: list[str] = []
+    for field, default in _PARTIAL_DEFAULTS.items():
+        if payload.get(field) is None:
+            payload[field] = default
+            missing.append(field)
+    for dimension, conf_field in _CONFIDENCE_OF.items():
+        if dimension in missing:
+            payload[conf_field] = 0.0
+    supplied = len(_PARTIAL_DEFAULTS) - len(missing)
+    if supplied == 0:
+        raise ValueError("model supplied none of the analysis fields")
+    # Drop keys the model invented so extra="forbid" still holds.
+    payload = {k: v for k, v in payload.items() if k in _PARTIAL_DEFAULTS}
+    return VLMAnalysis.model_validate(payload), missing
+
+
+def completeness(missing: list[str]) -> float:
+    """Share of analysis fields the model actually supplied (1.0 = complete)."""
+    return round(1.0 - len(missing) / len(_PARTIAL_DEFAULTS), 3)
+
+
 class AnalysisStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"

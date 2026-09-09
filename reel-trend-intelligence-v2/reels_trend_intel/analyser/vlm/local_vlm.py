@@ -19,7 +19,7 @@ import io
 import json
 import re
 
-from reels_trend_intel.analyser.types import VLMAnalysis
+from reels_trend_intel.analyser.types import VLMAnalysis, parse_lenient
 from reels_trend_intel.analyser.vlm.base import (
     SYSTEM_PROMPT,
     Availability,
@@ -170,7 +170,15 @@ class LocalVLMAdapter(VLMAdapter):
         trimmed = generated[:, inputs["input_ids"].shape[1]:]
         reply = processor.batch_decode(  # type: ignore[attr-defined]
             trimmed, skip_special_tokens=True)[0]
-        analysis = VLMAnalysis.model_validate(extract_json(reply))
+        raw = extract_json(reply)
+        if self.cfg.local_allow_partial:
+            # Small models routinely answer a subset of the schema. Keep what they
+            # gave, default the rest with zeroed confidence, and record the gap.
+            analysis, missing = parse_lenient(raw)
+            self.last_missing_fields = missing
+        else:
+            analysis = VLMAnalysis.model_validate(raw)
+            self.last_missing_fields = []
         usage = VLMUsage(
             input_tokens=int(inputs["input_ids"].shape[1]),
             output_tokens=int(trimmed.shape[1]),

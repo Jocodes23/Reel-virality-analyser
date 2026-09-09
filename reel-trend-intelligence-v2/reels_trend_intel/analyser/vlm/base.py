@@ -16,7 +16,12 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
-from reels_trend_intel.analyser.types import ANALYSER_SCHEMA_VERSION, AnalysisStatus, VLMAnalysis
+from reels_trend_intel.analyser.types import (
+    ANALYSER_SCHEMA_VERSION,
+    AnalysisStatus,
+    VLMAnalysis,
+    completeness,
+)
 from reels_trend_intel.config.settings import AnalyserConfig
 from reels_trend_intel.observability.logging import get_logger
 
@@ -66,10 +71,18 @@ class VLMResult:
     model_id: str = ""
     prompt_version: str = PROMPT_VERSION
     schema_version: str = ANALYSER_SCHEMA_VERSION
+    # Graceful degradation: 1.0 when the model answered every field. Missing
+    # dimensions carry 0.0 confidence, so downstream can weight the row honestly.
+    completeness: float = 1.0
+    missing_fields: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
         return self.status is AnalysisStatus.DONE and self.analysis is not None
+
+    @property
+    def partial(self) -> bool:
+        return self.ok and bool(self.missing_fields)
 
 
 @dataclass
@@ -94,6 +107,7 @@ class VLMAdapter(ABC):
 
     def __init__(self, cfg: AnalyserConfig) -> None:
         self.cfg = cfg
+        self.last_missing_fields: list[str] = []
 
     @property
     @abstractmethod
@@ -103,6 +117,10 @@ class VLMAdapter(ABC):
     @abstractmethod
     def availability(self) -> Availability:
         """Can this adapter run right now? Never raises — used by `rti vlm-info`."""
+
+    #: Fields the model omitted on the most recent successful call. Adapters that
+    #: accept partial responses set this; strict adapters leave it empty.
+    last_missing_fields: list[str]
 
     @abstractmethod
     async def analyse(
@@ -133,6 +151,7 @@ async def analyse_with_retry(
     last_error = "unknown error"
 
     for attempt in range(1, max_retries + 2):
+        adapter.last_missing_fields = []
         try:
             analysis, usage = await adapter.analyse(
                 montage_png, duration_s=duration_s, cut_count=cut_count
@@ -142,12 +161,17 @@ async def analyse_with_retry(
             log.warning("vlm_attempt_failed", provider=adapter.provider,
                         attempt=attempt, error=last_error[:200])
             continue
+        missing = list(adapter.last_missing_fields)
+        if missing:
+            log.info("vlm_partial_analysis", provider=adapter.provider,
+                     missing=len(missing), completeness=completeness(missing))
         return VLMResult(
             status=AnalysisStatus.DONE, analysis=analysis, attempts=attempt,
             latency_s=round(time.perf_counter() - started, 3),
             cost_usd=adapter.cost_usd(usage), input_tokens=usage.input_tokens,
             output_tokens=usage.output_tokens, provider=adapter.provider,
-            model_id=adapter.model_id,
+            model_id=adapter.model_id, completeness=completeness(missing),
+            missing_fields=missing,
         )
 
     log.error("vlm_failed", provider=adapter.provider, attempts=max_retries + 1,

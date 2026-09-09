@@ -226,6 +226,10 @@ class AnalyserConfig(BaseModel):
     local_device: Device = "auto"
     local_load_4bit: bool = False     # requires bitsandbytes; off by default
     local_max_new_tokens: int = 512
+    # Small models often answer only part of the schema. Accept partial answers
+    # (missing fields get neutral defaults + 0.0 confidence) instead of losing the
+    # reel; `VLMResult.completeness` records how much was actually supplied.
+    local_allow_partial: bool = True
 
     # Anthropic (Claude). Pricing $/1M tokens, for cost estimation only.
     anthropic_model: str = "claude-opus-5"

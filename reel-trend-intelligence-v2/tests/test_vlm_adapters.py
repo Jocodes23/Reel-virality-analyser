@@ -13,6 +13,8 @@ from reels_trend_intel.analyser.types import (
     GradeClass,
     ShotClass,
     VLMAnalysis,
+    completeness,
+    parse_lenient,
 )
 from reels_trend_intel.analyser.vlm import (
     PROVIDERS,
@@ -232,3 +234,55 @@ def test_extract_json_survives_local_model_chattiness(raw):
 def test_extract_json_raises_when_absent():
     with pytest.raises(ValueError, match="no JSON object"):
         extract_json("I cannot analyse this image.")
+
+
+# --- graceful degradation on partial local answers --------------------------
+def test_parse_lenient_keeps_what_the_model_answered():
+    """Measured behaviour: small models emit a subset of the 17 fields."""
+    partial = {"archetype": "comedy_skit", "archetype_confidence": 0.8,
+               "text_density": 0.5, "text_present": True}
+    analysis, missing = parse_lenient(partial)
+    assert analysis.archetype is Archetype.COMEDY_SKIT   # answered -> kept
+    assert analysis.archetype_confidence == 0.8
+    assert analysis.text_density == 0.5
+    assert "shot_class" in missing and "grade_class" in missing
+    assert 0.0 < completeness(missing) < 1.0
+
+
+def test_partial_dimensions_get_zero_confidence_never_invented():
+    analysis, missing = parse_lenient({"archetype": "food"})
+    assert "shot_class" in missing
+    assert analysis.shot_confidence == 0.0     # defaulted -> no confidence claimed
+    assert analysis.grade_confidence == 0.0
+    assert analysis.archetype_confidence == 0.0  # archetype given but confidence wasn't
+
+
+def test_complete_answer_reports_full_completeness():
+    analysis, missing = parse_lenient(VALID)
+    assert missing == [] and completeness(missing) == 1.0
+    assert analysis.shot_class is ShotClass.POLISHED_HANDHELD
+
+
+def test_parse_lenient_rejects_a_wholly_degenerate_answer():
+    with pytest.raises(ValueError, match="none of the analysis fields"):
+        parse_lenient({"t-0.0s": ["t-0.0s", "t-0.0s"]})   # the real SmolVLM failure
+
+
+def test_parse_lenient_drops_invented_keys():
+    analysis, _ = parse_lenient({**VALID, "hallucinated_field": 123})
+    assert analysis.archetype is Archetype.FOOD
+
+
+@pytest.mark.asyncio
+async def test_result_surfaces_partial_completeness():
+    cfg = AnalyserConfig()
+
+    class _PartialAdapter(_FakeAdapter):
+        async def analyse(self, montage_png, *, duration_s=None, cut_count=None):  # type: ignore[no-untyped-def]
+            analysis, missing = parse_lenient({"archetype": "dance"})
+            self.last_missing_fields = missing
+            return analysis, VLMUsage(10, 10)
+
+    res = await analyse_with_retry(_PartialAdapter(cfg), b"png")
+    assert res.ok and res.partial
+    assert res.completeness < 1.0 and "shot_class" in res.missing_fields
