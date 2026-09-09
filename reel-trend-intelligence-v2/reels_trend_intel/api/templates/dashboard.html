@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <!-- Live view: the collector rewrites the report on its rebuild tick, so poll. -->
+  <meta http-equiv="refresh" content="60"/>
+  <title>Reels Trend Intelligence</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+           margin: 0; padding: 24px; background: #0f1115; color: #e8eaed; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    .sub { color: #9aa0a6; font-size: 13px; margin-bottom: 18px; }
+    .grid { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+    .card { background: #181b22; border: 1px solid #262b36; border-radius: 10px;
+            padding: 12px 16px; min-width: 150px; }
+    .card .k { font-size: 11px; color: #9aa0a6; text-transform: uppercase; letter-spacing:.04em;}
+    .card .v { font-size: 20px; font-weight: 650; margin-top: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid #232833; }
+    th { color: #9aa0a6; font-weight: 600; position: sticky; top: 0; background: #0f1115; }
+    tr:hover td { background: #15181f; }
+    .pill { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .pre-peak { background:#10331f; color:#5ee08f; }
+    .peak { background:#33310f; color:#e6cf57; }
+    .decay { background:#331316; color:#e3737f; }
+    .ws { background:#10283a; color:#5cb3f0; }
+    .bar { height: 6px; border-radius: 4px; background:#262b36; position:relative; min-width:70px;}
+    .bar > span { position:absolute; left:0; top:0; bottom:0; border-radius:4px; background:#5ee08f; }
+    a { color:#7cc0ff; text-decoration:none; } a:hover { text-decoration: underline; }
+    .ci { color:#9aa0a6; font-size: 11px; }
+    code { color:#c8a6ff; }
+  </style>
+</head>
+<body>
+  <h1>Reels Trend Intelligence</h1>
+  <div class="sub">
+    niche: <code>{{ payload.niche }}</code> · ranked by <code>{{ payload.ranking_key }}</code>
+    · generated <code>{{ payload.generated_at }}</code>
+    · <span id="age" class="ci">auto-refreshes every 60s</span>
+  </div>
+  <script>
+    // Show how stale the report is, so "is this live?" is never ambiguous.
+    (function () {
+      const gen = "{{ payload.generated_at }}";
+      const el = document.getElementById("age");
+      if (!gen || gen === "None") return;
+      const tick = () => {
+        const secs = Math.max(0, (Date.now() - new Date(gen).getTime()) / 1000);
+        const s = secs < 90 ? `${secs | 0}s` :
+                  secs < 5400 ? `${(secs / 60) | 0}m` : `${(secs / 3600) | 0}h`;
+        el.textContent = `report age ${s} · auto-refreshes every 60s`;
+      };
+      tick(); setInterval(tick, 1000);
+    })();
+  </script>
+
+  <div class="grid">
+    <div class="card"><div class="k">Trends</div><div class="v">{{ trends|length }}</div></div>
+    <div class="card"><div class="k">Processed</div>
+      <div class="v">{{ metrics.get('processed', {}).values()|sum if metrics.get('processed') else '—' }}</div></div>
+    <div class="card"><div class="k">Whitespace</div>
+      <div class="v">{{ trends|selectattr('is_whitespace')|list|length }}</div></div>
+    <div class="card"><div class="k">Pre-peak</div>
+      <div class="v">{{ trends|selectattr('dynamics.phase','equalto','pre-peak')|list|length }}</div></div>
+  </div>
+
+  {% if live %}
+  <div class="card" style="margin-bottom:18px">
+    <div class="k">Live collection · last {{ live.since_hours|int }}h
+      {% if live.last_sample_at %}· newest sample <code>{{ live.last_sample_at[11:19] }}Z</code>{% endif %}
+    </div>
+    <div class="sub" style="margin:6px 0 10px">
+      <strong>{{ live.reels_tracked }}</strong> reels tracked ·
+      <strong>{{ live.engagement_samples }}</strong> engagement samples ·
+      <strong>{{ live.reels_with_series }}</strong> with a time-series
+    </div>
+    {% if live.movers %}
+      <table style="margin-top:4px">
+        <thead><tr><th>Biggest movers</th><th>Δ likes</th><th>Likes now</th><th>Samples</th></tr></thead>
+        <tbody>
+        {% for m in live.movers %}
+          <tr><td><a href="{{ m.permalink }}" target="_blank">@{{ m.author_handle }} ↗</a></td>
+              <td style="color:#5ee08f">+{{ '{:,}'.format(m.delta_likes) }}</td>
+              <td>{{ '{:,}'.format(m.likes) }}</td>
+              <td class="ci">{{ m.samples }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <span class="ci">No measurable movement yet — needs 2+ samples of the same reel.</span>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <table>
+    <thead><tr>
+      <th>#</th><th>Trend</th><th>Type</th><th>Phase</th><th>R(t)</th>
+      <th>Health</th><th>Persistence (95% CI)</th><th>Top reel</th><th>Audio</th><th></th>
+    </tr></thead>
+    <tbody>
+    {% for t in trends %}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td><strong>{{ t.identity.label }}</strong><br>
+            <span class="ci">{{ t.identity.size }} reels · {{ t.identity.trend_id }}</span></td>
+        <td>{{ t.identity.type }}</td>
+        <td><span class="pill {{ t.dynamics.phase }}">{{ t.dynamics.phase }}</span></td>
+        <td>{{ '%.2f'|format(t.dynamics.r_t) }}</td>
+        <td><div class="bar"><span style="width: {{ (t.health_score*100)|round }}%"></span></div>
+            <span class="ci">{{ '%.2f'|format(t.health_score) }}</span></td>
+        <td>{{ '%.0f'|format(t.dynamics.persistence_probability*100) }}%
+            <span class="ci">[{{ '%.0f'|format(t.dynamics.persistence_ci.low*100) }}–{{ '%.0f'|format(t.dynamics.persistence_ci.high*100) }}%]</span></td>
+        {# Play counts are not exposed for other accounts' media, so fall back to
+           likes + comments rather than rendering a misleading "0 plays". #}
+        <td><a href="{{ t.headline_links.top_reel.url }}" target="_blank">
+          {%- set tr = t.headline_links.top_reel -%}
+          {%- if tr.plays -%}{{ '{:,}'.format(tr.plays) }} plays
+          {%- else -%}{{ '{:,}'.format(tr.likes) }} likes · {{ '{:,}'.format(tr.comments) }} comments
+          {%- endif %} ↗</a>
+          <br><span class="ci">@{{ tr.author_handle }}</span></td>
+        <td><a href="{{ t.headline_links.audio.instagram_audio_url }}" target="_blank">{{ t.headline_links.audio.song_title or t.headline_links.audio.audio_id }} ↗</a></td>
+        <td>{% if t.is_whitespace %}<span class="pill ws">whitespace</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if not trends %}<p class="sub">No report yet — run <code>rti run-once</code>.</p>{% endif %}
+</body>
+</html>

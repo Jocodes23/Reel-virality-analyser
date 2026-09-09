@@ -1,6 +1,4 @@
-# Root-level ignores. Each version directory also carries its own .gitignore.
-
-# secrets — never commit
+# secrets & local config
 .env
 *.env.local
 
@@ -24,13 +22,16 @@ venv/
 build/
 dist/
 
+# model weights cache
+.cache/
+*.onnx
+
 # large local artifacts — never commit (GitHub rejects >100 MB)
 *.whl
 *.pt
 *.bin
 *.safetensors
-*.onnx
-.cache/
-
-# media cache for the V2 analyser (downloaded videos / keyframes)
-media_cache/
+# local GPU/serve helper scripts contain hardcoded machine paths
+run_gpu.py
+serve_gpu.py
+live_smoke.py

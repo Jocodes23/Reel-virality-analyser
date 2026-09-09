@@ -1,0 +1,50 @@
+# One `docker compose up` brings up Postgres 16 + TimescaleDB + pgvector and the
+# service (API + worker). The timescaledb-ha image bundles TimescaleDB AND pgvector.
+services:
+  db:
+    image: timescale/timescaledb-ha:pg16
+    environment:
+      POSTGRES_USER: rti
+      POSTGRES_PASSWORD: rti
+      POSTGRES_DB: rti
+    ports:
+      - "5432:5432"
+    volumes:
+      - rti_pgdata:/home/postgres/pgdata/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rti -d rti"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      RTI_STORAGE__BACKEND: postgres
+      RTI_STORAGE__POSTGRES_DSN: postgresql://rti:rti@db:5432/rti
+      RTI_API__HOST: 0.0.0.0
+    command: ["bash", "-lc", "rti init-db && rti serve"]
+    ports:
+      - "8000:8000"
+
+  worker:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_started
+    environment:
+      RTI_STORAGE__BACKEND: postgres
+      RTI_STORAGE__POSTGRES_DSN: postgresql://rti:rti@db:5432/rti
+      # Config-driven active source set. Provide credentials via a .env file.
+      RTI_COLLECTION__ENABLED_ADAPTERS: '["sample","graph_api","licensed_provider","owned_session"]'
+    env_file:
+      - .env
+    command: ["bash", "-lc", "rti loop"]
+
+volumes:
+  rti_pgdata:
