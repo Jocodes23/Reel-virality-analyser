@@ -198,39 +198,50 @@ class ReportConfig(BaseModel):
     resolve_external_links: bool = True
 
 
-VLMProvider = Literal["anthropic", "openai", "local"]
+VLMProvider = Literal["local", "anthropic", "openai", "auto"]
 
 
 class AnalyserConfig(BaseModel):
     """Per-reel video analyser (V2). Every threshold here is config-driven.
 
-    The VLM is chosen at runtime via `vlm_provider` (or a per-call override), so
-    you can toggle between a local model and either hosted API without code
-    changes. No provider is imported by engine code — only by its adapter.
+    LOCAL BY DEFAULT — analysis runs on your own GPU at zero per-reel cost. To use
+    a hosted model instead, set an API key and flip `vlm_provider` (or leave it on
+    "auto", which picks a hosted provider the moment a key is present and falls
+    back to local otherwise). No provider is imported by engine code.
+
+    The `openai` adapter speaks the OpenAI-compatible protocol, so it is not
+    limited to OpenAI: point `openai_base_url` at OpenRouter, Together, Groq,
+    DeepInfra, Fireworks or a self-hosted vLLM and it works with just a key + a
+    model name.
     """
 
     # --- provider toggle ---------------------------------------------------
-    vlm_provider: VLMProvider = "anthropic"
+    vlm_provider: VLMProvider = "local"
 
-    # Anthropic (Claude). Pricing $/1M tokens for cost estimation.
+    # Local VLM. Default is sized for a 4 GB card: a ~500M model runs in ~1 GB of
+    # VRAM in fp16 with NO quantisation (bitsandbytes is fragile on Windows).
+    # Larger local models give better labels but will miss the throughput target
+    # on a small GPU — see README for the ladder.
+    local_model: str = "HuggingFaceTB/SmolVLM-500M-Instruct"
+    local_device: Device = "auto"
+    local_load_4bit: bool = False     # requires bitsandbytes; off by default
+    local_max_new_tokens: int = 512
+
+    # Anthropic (Claude). Pricing $/1M tokens, for cost estimation only.
     anthropic_model: str = "claude-opus-5"
     anthropic_effort: Literal["low", "medium", "high", "xhigh", "max"] = "low"
     anthropic_max_tokens: int = 2048
     anthropic_price_in_per_mtok: float = 5.00
     anthropic_price_out_per_mtok: float = 25.00
 
-    # OpenAI (ChatGPT). Model must be vision-capable.
+    # OpenAI-compatible hosted model (OpenAI, OpenRouter, Together, Groq, vLLM...).
+    # Leave base_url unset for OpenAI itself. Must be vision-capable.
     openai_model: str = "gpt-4o"
+    openai_base_url: str | None = None
+    openai_api_key_env: str = "OPENAI_API_KEY"
     openai_max_tokens: int = 2048
     openai_price_in_per_mtok: float = 2.50
     openai_price_out_per_mtok: float = 10.00
-
-    # Local VLM. A 4 GB card realistically fits only a small quantised model;
-    # see README for the quality tradeoff.
-    local_model: str = "Qwen/Qwen2-VL-2B-Instruct"
-    local_device: Device = "auto"
-    local_load_4bit: bool = True
-    local_max_new_tokens: int = 1024
 
     # --- keyframe montage --------------------------------------------------
     max_frames: int = 12
@@ -238,9 +249,11 @@ class AnalyserConfig(BaseModel):
     montage_max_width: int = 1280
     montage_cols: int = 4
 
-    # --- queue + cost controls --------------------------------------------
+    # --- throughput + cost controls ---------------------------------------
     vlm_retries: int = 1              # one retry on parse failure, then fail
-    daily_analysis_cap: int = 500
+    max_calls_per_hour: int = 200     # analyser throughput ceiling
+    daily_analysis_cap: int = 4800    # 200/h sustained
+    analysis_concurrency: int = 1     # >1 only helps hosted; a 4 GB GPU is serial
     min_engagement_to_analyse: int = 0
     request_timeout_s: float = 120.0
 

@@ -112,7 +112,12 @@ class LocalVLMAdapter(VLMAdapter):
     def _load(self) -> tuple[object, object]:
         if self._model is None or self._processor is None:
             import torch
-            from transformers import AutoModelForVision2Seq, AutoProcessor
+            from transformers import AutoProcessor
+
+            try:  # transformers >= 4.52; Vision2Seq is removed in v5
+                from transformers import AutoModelForImageTextToText as _AutoVLM
+            except ImportError:  # pragma: no cover - older transformers
+                from transformers import AutoModelForVision2Seq as _AutoVLM
 
             device = self._resolve_device()
             kwargs: dict = {"dtype": torch.float16 if device == "cuda" else torch.float32}
@@ -123,7 +128,7 @@ class LocalVLMAdapter(VLMAdapter):
                     load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16
                 )
                 kwargs["device_map"] = "auto"
-            model = AutoModelForVision2Seq.from_pretrained(self.cfg.local_model, **kwargs)
+            model = _AutoVLM.from_pretrained(self.cfg.local_model, **kwargs)
             if "device_map" not in kwargs:
                 model = model.to(device)
             self._model = model

@@ -18,6 +18,7 @@ from reels_trend_intel.analyser.vlm import (
     PROVIDERS,
     availability_report,
     make_vlm_adapter,
+    resolve_provider,
 )
 from reels_trend_intel.analyser.vlm.base import (
     VLMAdapter,
@@ -149,6 +150,54 @@ def test_factory_honours_config_and_override():
 def test_factory_rejects_unknown_provider():
     with pytest.raises(ValueError, match="unknown VLM provider"):
         make_vlm_adapter(AnalyserConfig(), override="gemini")
+
+
+def test_default_is_local_so_analysis_costs_nothing_out_of_the_box():
+    cfg = AnalyserConfig()
+    assert cfg.vlm_provider == "local"
+    assert make_vlm_adapter(cfg).provider == "local"
+
+
+# --- "auto": add a key and it switches -------------------------------------
+def test_auto_falls_back_to_local_with_no_keys(monkeypatch):
+    for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    assert resolve_provider(AnalyserConfig(vlm_provider="auto")) == "local"
+
+
+def test_auto_picks_hosted_once_a_key_exists(monkeypatch):
+    for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    cfg = AnalyserConfig(vlm_provider="auto")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    assert resolve_provider(cfg) == "openai"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    assert resolve_provider(cfg) == "anthropic"
+
+
+def test_explicit_choice_is_honoured_even_without_its_key(monkeypatch):
+    """A misconfiguration must surface loudly, not silently run a different model."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    assert resolve_provider(AnalyserConfig(vlm_provider="openai")) == "openai"
+
+
+# --- any OpenAI-compatible gateway ------------------------------------------
+def test_hosted_adapter_targets_any_openai_compatible_endpoint():
+    cfg = AnalyserConfig(
+        openai_base_url="https://openrouter.ai/api/v1",
+        openai_model="anthropic/claude-3.5-sonnet",
+        openai_api_key_env="OPENROUTER_API_KEY",
+    )
+    adapter = make_vlm_adapter(cfg, override="openai")
+    assert adapter.model_id == "anthropic/claude-3.5-sonnet"
+    assert "openrouter.ai" in adapter.endpoint  # type: ignore[attr-defined]
+
+
+def test_hosted_adapter_reports_the_key_var_it_needs(monkeypatch):
+    monkeypatch.delenv("TOGETHER_API_KEY", raising=False)
+    cfg = AnalyserConfig(openai_api_key_env="TOGETHER_API_KEY")
+    av = make_vlm_adapter(cfg, override="openai").availability()
+    assert av.ready is False and "TOGETHER_API_KEY" in av.detail
 
 
 def test_availability_report_never_raises():

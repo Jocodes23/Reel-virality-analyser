@@ -85,17 +85,33 @@ def _loop(args: argparse.Namespace) -> int:
 
 def _vlm_info(args: argparse.Namespace) -> int:
     """Show which VLM provider is selected and whether each one can actually run."""
-    from reels_trend_intel.analyser.vlm import availability_report, make_vlm_adapter
+    from reels_trend_intel.analyser.vlm import (
+        availability_report,
+        make_vlm_adapter,
+        resolve_provider,
+    )
 
     cfg = get_settings().analyser
-    selected = (getattr(args, "provider", None) or cfg.vlm_provider).lower()
-    print(f"selected provider : {selected}"
-          f"{'  (override)' if getattr(args, 'provider', None) else '  (from config)'}")
+    override = getattr(args, "provider", None)
+    configured = (override or cfg.vlm_provider).lower()
+    selected = resolve_provider(cfg, override)
+    source = "override" if override else "from config"
+    if configured == "auto":
+        source = f"auto -> {selected}"
+    print(f"selected provider : {selected}  ({source})")
     try:
-        print(f"model             : {make_vlm_adapter(cfg, override=selected).model_id}")
+        adapter = make_vlm_adapter(cfg, override=selected)
     except ValueError as exc:
         print(f"!! {exc}")
         return 1
+    print(f"model             : {adapter.model_id}")
+    endpoint = getattr(adapter, "endpoint", None)
+    if endpoint:
+        print(f"endpoint          : {endpoint}")
+    print(f"throughput target : {cfg.max_calls_per_hour}/hour "
+          f"({3600 / cfg.max_calls_per_hour:.0f}s per reel budget), "
+          f"daily cap {cfg.daily_analysis_cap}")
+
     print("\nprovider availability:")
     for name, av in availability_report(cfg).items():
         mark = "OK " if av.ready else "-- "
@@ -103,8 +119,14 @@ def _vlm_info(args: argparse.Namespace) -> int:
         print(f"  {mark}{name:10s} {av.detail}{star}")
         for extra in av.extras:
             print(f"       note: {extra}")
-    print("\ntoggle with:  RTI_ANALYSER__VLM_PROVIDER=anthropic|openai|local")
-    print("          or:  rti vlm-info --provider local")
+
+    print("\nlocal is the default (free, offline). To use a hosted model instead,")
+    print("put a key in .env — any OpenAI-compatible provider works:")
+    print("  OPENAI_API_KEY=sk-...                          # OpenAI")
+    print("  RTI_ANALYSER__OPENAI_BASE_URL=https://openrouter.ai/api/v1")
+    print("  RTI_ANALYSER__OPENAI_MODEL=anthropic/claude-3.5-sonnet")
+    print("  RTI_ANALYSER__OPENAI_API_KEY_ENV=OPENROUTER_API_KEY")
+    print("then:  RTI_ANALYSER__VLM_PROVIDER=openai   (or 'auto' to switch on a key)")
     return 0
 
 
@@ -147,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("generate-fixtures", help="summarize fixtures").set_defaults(
         func=_generate_fixtures)
     vi = sub.add_parser("vlm-info", help="show/select the VLM provider for analysis")
-    vi.add_argument("--provider", choices=["anthropic", "openai", "local"],
+    vi.add_argument("--provider", choices=["local", "anthropic", "openai", "auto"],
                     help="override the configured provider for this check")
     vi.set_defaults(func=_vlm_info)
 

@@ -1,10 +1,20 @@
-"""ChatGPT (OpenAI) VLM adapter.
+"""OpenAI-compatible hosted VLM adapter — works with far more than just ChatGPT.
 
 Uses the official `openai` SDK with a strict `json_schema` response format built
-from the same pydantic model, so both hosted providers are held to an identical
-contract. Credentials come from `OPENAI_API_KEY` only.
+from the same pydantic model, so every provider is held to an identical contract.
 
-Install with: pip install "openai>=1.40". The model must be vision-capable.
+Because the OpenAI protocol is the de-facto standard, pointing `openai_base_url`
+at another gateway is all it takes to use a different model — **just add an API
+key and a model name**:
+
+    OpenAI       (leave base_url unset)          model: gpt-4o
+    OpenRouter   https://openrouter.ai/api/v1    model: anthropic/claude-3.5-sonnet
+    Together     https://api.together.xyz/v1     model: meta-llama/Llama-Vision-Free
+    Groq         https://api.groq.com/openai/v1  model: llama-3.2-11b-vision-preview
+    vLLM (self)  http://localhost:8000/v1        model: <whatever you serve>
+
+The key is read from whichever env var `openai_api_key_env` names, so several
+gateways can coexist. Install with: pip install "openai>=1.40".
 """
 
 from __future__ import annotations
@@ -58,6 +68,10 @@ class OpenAIVLMAdapter(VLMAdapter):
     def model_id(self) -> str:
         return self.cfg.openai_model
 
+    @property
+    def endpoint(self) -> str:
+        return self.cfg.openai_base_url or "https://api.openai.com/v1 (default)"
+
     def availability(self) -> Availability:
         try:
             import openai  # noqa: F401
@@ -65,16 +79,27 @@ class OpenAIVLMAdapter(VLMAdapter):
             return Availability(False, "openai SDK not installed", ["pip install openai"])
         import os
 
-        if not os.getenv("OPENAI_API_KEY"):
-            return Availability(False, "no credential (set OPENAI_API_KEY)",
-                                ["export OPENAI_API_KEY=sk-..."])
-        return Availability(True, f"ready — {self.model_id}")
+        key_var = self.cfg.openai_api_key_env
+        if not os.getenv(key_var):
+            return Availability(
+                False, f"no credential (set {key_var})",
+                [f"set {key_var}=... in .env, then RTI_ANALYSER__VLM_PROVIDER=openai"],
+            )
+        return Availability(True, f"ready — {self.model_id} @ {self.endpoint}")
 
     def _get_client(self) -> object:
         if self._client is None:
+            import os
+
             import openai
 
-            self._client = openai.AsyncOpenAI(timeout=self.cfg.request_timeout_s)
+            key = os.getenv(self.cfg.openai_api_key_env)
+            if not key:
+                raise RuntimeError(f"{self.cfg.openai_api_key_env} is not set")
+            kwargs: dict = {"api_key": key, "timeout": self.cfg.request_timeout_s}
+            if self.cfg.openai_base_url:
+                kwargs["base_url"] = self.cfg.openai_base_url
+            self._client = openai.AsyncOpenAI(**kwargs)
         return self._client
 
     async def analyse(
