@@ -198,6 +198,53 @@ class ReportConfig(BaseModel):
     resolve_external_links: bool = True
 
 
+VLMProvider = Literal["anthropic", "openai", "local"]
+
+
+class AnalyserConfig(BaseModel):
+    """Per-reel video analyser (V2). Every threshold here is config-driven.
+
+    The VLM is chosen at runtime via `vlm_provider` (or a per-call override), so
+    you can toggle between a local model and either hosted API without code
+    changes. No provider is imported by engine code — only by its adapter.
+    """
+
+    # --- provider toggle ---------------------------------------------------
+    vlm_provider: VLMProvider = "anthropic"
+
+    # Anthropic (Claude). Pricing $/1M tokens for cost estimation.
+    anthropic_model: str = "claude-opus-5"
+    anthropic_effort: Literal["low", "medium", "high", "xhigh", "max"] = "low"
+    anthropic_max_tokens: int = 2048
+    anthropic_price_in_per_mtok: float = 5.00
+    anthropic_price_out_per_mtok: float = 25.00
+
+    # OpenAI (ChatGPT). Model must be vision-capable.
+    openai_model: str = "gpt-4o"
+    openai_max_tokens: int = 2048
+    openai_price_in_per_mtok: float = 2.50
+    openai_price_out_per_mtok: float = 10.00
+
+    # Local VLM. A 4 GB card realistically fits only a small quantised model;
+    # see README for the quality tradeoff.
+    local_model: str = "Qwen/Qwen2-VL-2B-Instruct"
+    local_device: Device = "auto"
+    local_load_4bit: bool = True
+    local_max_new_tokens: int = 1024
+
+    # --- keyframe montage --------------------------------------------------
+    max_frames: int = 12
+    frame_grid_seconds: float = 1.5
+    montage_max_width: int = 1280
+    montage_cols: int = 4
+
+    # --- queue + cost controls --------------------------------------------
+    vlm_retries: int = 1              # one retry on parse failure, then fail
+    daily_analysis_cap: int = 500
+    min_engagement_to_analyse: int = 0
+    request_timeout_s: float = 120.0
+
+
 class ApiConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8000
@@ -221,6 +268,7 @@ class Settings(BaseSettings):
     models: ModelConfig = Field(default_factory=ModelConfig)
     emerging: EmergingConfig = Field(default_factory=EmergingConfig)
     report: ReportConfig = Field(default_factory=ReportConfig)
+    analyser: AnalyserConfig = Field(default_factory=AnalyserConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)
 
 

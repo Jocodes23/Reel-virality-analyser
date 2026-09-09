@@ -83,6 +83,31 @@ def _loop(args: argparse.Namespace) -> int:
     return 0
 
 
+def _vlm_info(args: argparse.Namespace) -> int:
+    """Show which VLM provider is selected and whether each one can actually run."""
+    from reels_trend_intel.analyser.vlm import availability_report, make_vlm_adapter
+
+    cfg = get_settings().analyser
+    selected = (getattr(args, "provider", None) or cfg.vlm_provider).lower()
+    print(f"selected provider : {selected}"
+          f"{'  (override)' if getattr(args, 'provider', None) else '  (from config)'}")
+    try:
+        print(f"model             : {make_vlm_adapter(cfg, override=selected).model_id}")
+    except ValueError as exc:
+        print(f"!! {exc}")
+        return 1
+    print("\nprovider availability:")
+    for name, av in availability_report(cfg).items():
+        mark = "OK " if av.ready else "-- "
+        star = " <- selected" if name == selected else ""
+        print(f"  {mark}{name:10s} {av.detail}{star}")
+        for extra in av.extras:
+            print(f"       note: {extra}")
+    print("\ntoggle with:  RTI_ANALYSER__VLM_PROVIDER=anthropic|openai|local")
+    print("          or:  rti vlm-info --provider local")
+    return 0
+
+
 def _load_dotenv() -> None:
     """Load RTI_* keys from ./.env into os.environ.
 
@@ -121,6 +146,11 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("init-db", help="create schema").set_defaults(func=_init_db)
     sub.add_parser("generate-fixtures", help="summarize fixtures").set_defaults(
         func=_generate_fixtures)
+    vi = sub.add_parser("vlm-info", help="show/select the VLM provider for analysis")
+    vi.add_argument("--provider", choices=["anthropic", "openai", "local"],
+                    help="override the configured provider for this check")
+    vi.set_defaults(func=_vlm_info)
+
     lp = sub.add_parser("loop", help="resilient production loop")
     lp.add_argument("--once", action="store_true",
                     help="single collect+rebuild pass, then exit (good for a live demo)")
