@@ -40,7 +40,7 @@ class ResilientLoop:
 
         self.storage = make_storage(settings)
         self.scheduler = PoliteScheduler(self.storage, settings.collection, settings.app.seed)
-        self.adapters = {n: make_adapter(n) for n in settings.collection.enabled_adapters}
+        self.adapters = {n: self._make_adapter(n) for n in settings.collection.enabled_adapters}
         self.fp = FeaturePipeline(self.storage, settings)
         self._stop = asyncio.Event()
 
@@ -50,7 +50,7 @@ class ResilientLoop:
             if adapter.halted:
                 continue
             try:
-                discovered = await self.scheduler.guard(name, partial(adapter.discover, 50))
+                discovered = await self.scheduler.guard(name, partial(adapter.discover, 500))
                 for reel, audio in discovered:
                     if audio:
                         await self.storage.upsert_audio([audio])
@@ -129,15 +129,37 @@ class ResilientLoop:
         export_all(report, self.settings.report.export_dir)
         log.info("rebuild_done", trends=len(trends))
 
+    def _make_adapter(self, name: str):  # type: ignore[no-untyped-def]
+        """Build an adapter, injecting public-discovery config for graph_api."""
+        if name == "graph_api":
+            c = self.settings.collection
+            return make_adapter(name, hashtags=c.graph_hashtags,
+                                seed_usernames=c.graph_seed_usernames)
+        return make_adapter(name)
+
+    async def run_once(self) -> None:
+        """Single pass: one collect tick + one rebuild tick (no scheduler)."""
+        await self.storage.connect()
+        await self.storage.init_schema()
+        log.info("run_once_start", adapters=list(self.adapters))
+        await self.collect_tick()
+        await self.rebuild_tick()
+        for a in self.adapters.values():
+            await a.close()
+        await self.storage.close()
+        log.info("run_once_done")
+
     async def run(self) -> None:
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
         await self.storage.connect()
         await self.storage.init_schema()
         sched = AsyncIOScheduler(timezone="UTC")
-        sched.add_job(self._guarded(self.collect_tick), "interval", seconds=30,
+        sched.add_job(self._guarded(self.collect_tick), "interval",
+                      seconds=self.settings.collection.collect_interval_s,
                       max_instances=1, coalesce=True)
-        sched.add_job(self._guarded(self.rebuild_tick), "interval", minutes=15,
+        sched.add_job(self._guarded(self.rebuild_tick), "interval",
+                      seconds=self.settings.collection.rebuild_interval_s,
                       max_instances=1, coalesce=True)
         sched.start()
         log.info("loop_started", adapters=list(self.adapters))
@@ -168,5 +190,6 @@ class ResilientLoop:
                 signal.signal(sig, lambda *_: self._stop.set())
 
 
-async def run_loop(settings: Settings) -> None:
-    await ResilientLoop(settings).run()
+async def run_loop(settings: Settings, once: bool = False) -> None:
+    loop = ResilientLoop(settings)
+    await (loop.run_once() if once else loop.run())

@@ -3,6 +3,8 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <!-- Live view: the collector rewrites the report on its rebuild tick, so poll. -->
+  <meta http-equiv="refresh" content="60"/>
   <title>Reels Trend Intelligence</title>
   <style>
     :root { color-scheme: light dark; }
@@ -36,7 +38,23 @@
   <div class="sub">
     niche: <code>{{ payload.niche }}</code> · ranked by <code>{{ payload.ranking_key }}</code>
     · generated <code>{{ payload.generated_at }}</code>
+    · <span id="age" class="ci">auto-refreshes every 60s</span>
   </div>
+  <script>
+    // Show how stale the report is, so "is this live?" is never ambiguous.
+    (function () {
+      const gen = "{{ payload.generated_at }}";
+      const el = document.getElementById("age");
+      if (!gen || gen === "None") return;
+      const tick = () => {
+        const secs = Math.max(0, (Date.now() - new Date(gen).getTime()) / 1000);
+        const s = secs < 90 ? `${secs | 0}s` :
+                  secs < 5400 ? `${(secs / 60) | 0}m` : `${(secs / 3600) | 0}h`;
+        el.textContent = `report age ${s} · auto-refreshes every 60s`;
+      };
+      tick(); setInterval(tick, 1000);
+    })();
+  </script>
 
   <div class="grid">
     <div class="card"><div class="k">Trends</div><div class="v">{{ trends|length }}</div></div>
@@ -47,6 +65,34 @@
     <div class="card"><div class="k">Pre-peak</div>
       <div class="v">{{ trends|selectattr('dynamics.phase','equalto','pre-peak')|list|length }}</div></div>
   </div>
+
+  {% if live %}
+  <div class="card" style="margin-bottom:18px">
+    <div class="k">Live collection · last {{ live.since_hours|int }}h
+      {% if live.last_sample_at %}· newest sample <code>{{ live.last_sample_at[11:19] }}Z</code>{% endif %}
+    </div>
+    <div class="sub" style="margin:6px 0 10px">
+      <strong>{{ live.reels_tracked }}</strong> reels tracked ·
+      <strong>{{ live.engagement_samples }}</strong> engagement samples ·
+      <strong>{{ live.reels_with_series }}</strong> with a time-series
+    </div>
+    {% if live.movers %}
+      <table style="margin-top:4px">
+        <thead><tr><th>Biggest movers</th><th>Δ likes</th><th>Likes now</th><th>Samples</th></tr></thead>
+        <tbody>
+        {% for m in live.movers %}
+          <tr><td><a href="{{ m.permalink }}" target="_blank">@{{ m.author_handle }} ↗</a></td>
+              <td style="color:#5ee08f">+{{ '{:,}'.format(m.delta_likes) }}</td>
+              <td>{{ '{:,}'.format(m.likes) }}</td>
+              <td class="ci">{{ m.samples }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <span class="ci">No measurable movement yet — needs 2+ samples of the same reel.</span>
+    {% endif %}
+  </div>
+  {% endif %}
 
   <table>
     <thead><tr>
@@ -66,7 +112,14 @@
             <span class="ci">{{ '%.2f'|format(t.health_score) }}</span></td>
         <td>{{ '%.0f'|format(t.dynamics.persistence_probability*100) }}%
             <span class="ci">[{{ '%.0f'|format(t.dynamics.persistence_ci.low*100) }}–{{ '%.0f'|format(t.dynamics.persistence_ci.high*100) }}%]</span></td>
-        <td><a href="{{ t.headline_links.top_reel.url }}" target="_blank">{{ '{:,}'.format(t.headline_links.top_reel.plays) }} plays ↗</a></td>
+        {# Play counts are not exposed for other accounts' media, so fall back to
+           likes + comments rather than rendering a misleading "0 plays". #}
+        <td><a href="{{ t.headline_links.top_reel.url }}" target="_blank">
+          {%- set tr = t.headline_links.top_reel -%}
+          {%- if tr.plays -%}{{ '{:,}'.format(tr.plays) }} plays
+          {%- else -%}{{ '{:,}'.format(tr.likes) }} likes · {{ '{:,}'.format(tr.comments) }} comments
+          {%- endif %} ↗</a>
+          <br><span class="ci">@{{ tr.author_handle }}</span></td>
         <td><a href="{{ t.headline_links.audio.instagram_audio_url }}" target="_blank">{{ t.headline_links.audio.song_title or t.headline_links.audio.audio_id }} ↗</a></td>
         <td>{% if t.is_whitespace %}<span class="pill ws">whitespace</span>{% endif %}</td>
       </tr>

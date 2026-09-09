@@ -79,12 +79,35 @@ def _generate_fixtures(args: argparse.Namespace) -> int:
 def _loop(args: argparse.Namespace) -> int:
     from reels_trend_intel.orchestration.loop import run_loop
 
-    asyncio.run(run_loop(get_settings()))
+    asyncio.run(run_loop(get_settings(), once=bool(getattr(args, "once", False))))
     return 0
+
+
+def _load_dotenv() -> None:
+    """Load RTI_* keys from ./.env into os.environ.
+
+    pydantic-settings reads .env for Settings fields, but adapter *credentials*
+    are read via os.getenv, so we surface them here. Never logs values.
+    """
+    import os
+
+    path = os.path.join(os.getcwd(), ".env")
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            k, v = k.strip(), v.strip().strip('"').strip("'")
+            if k and v and k not in os.environ:
+                os.environ[k] = v
 
 
 def main(argv: list[str] | None = None) -> int:
     configure_logging()
+    _load_dotenv()
     p = argparse.ArgumentParser(prog="rti", description="Reels trend-intelligence")
     sub = p.add_subparsers(dest="command", required=True)
 
@@ -98,7 +121,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("init-db", help="create schema").set_defaults(func=_init_db)
     sub.add_parser("generate-fixtures", help="summarize fixtures").set_defaults(
         func=_generate_fixtures)
-    sub.add_parser("loop", help="resilient production loop").set_defaults(func=_loop)
+    lp = sub.add_parser("loop", help="resilient production loop")
+    lp.add_argument("--once", action="store_true",
+                    help="single collect+rebuild pass, then exit (good for a live demo)")
+    lp.set_defaults(func=_loop)
     sub.add_parser("version", help="print version").set_defaults(
         func=lambda a: (print(__version__), 0)[1])
 

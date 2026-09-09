@@ -258,6 +258,41 @@ class PostgresBackend(StorageBackend):
                 "LIMIT 1", reel_id)
         return self._eng(row) if row else None
 
+    async def collection_stats(
+        self, since_hours: float = 6.0, top_n: int = 5
+    ) -> dict[str, Any]:
+        from datetime import timedelta
+
+        cutoff = datetime.now(UTC) - timedelta(hours=since_hours)
+        async with self.pool.acquire() as conn:
+            out: dict[str, Any] = {
+                "since_hours": since_hours,
+                "reels_tracked": int(await conn.fetchval("SELECT COUNT(*) FROM reels") or 0),
+                "engagement_samples": int(
+                    await conn.fetchval("SELECT COUNT(*) FROM engagement_samples") or 0),
+                "reels_with_series": int(await conn.fetchval(
+                    "SELECT COUNT(*) FROM (SELECT reel_id FROM engagement_samples "
+                    "GROUP BY reel_id HAVING COUNT(*) > 1) s") or 0),
+            }
+            last = await conn.fetchval("SELECT MAX(sampled_at) FROM engagement_samples")
+            out["last_sample_at"] = last.isoformat() if last else None
+            rows = await conn.fetch(
+                """SELECT e.reel_id, r.permalink, r.author_handle,
+                          MAX(e.likes) - MIN(e.likes) AS delta, MAX(e.likes) AS likes,
+                          COUNT(*) AS n
+                   FROM engagement_samples e JOIN reels r ON r.reel_id = e.reel_id
+                   WHERE e.sampled_at >= $1
+                   GROUP BY e.reel_id, r.permalink, r.author_handle
+                   HAVING COUNT(*) > 1 AND MAX(e.likes) - MIN(e.likes) > 0
+                   ORDER BY delta DESC LIMIT $2""", cutoff, top_n)
+        out["movers"] = [
+            {"reel_id": r["reel_id"], "permalink": r["permalink"],
+             "author_handle": r["author_handle"], "delta_likes": int(r["delta"]),
+             "likes": int(r["likes"]), "samples": int(r["n"])}
+            for r in rows
+        ]
+        return out
+
     @staticmethod
     def _eng(row: Any) -> EngagementSample:
         return EngagementSample(

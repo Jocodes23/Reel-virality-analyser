@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import aiosqlite
@@ -343,6 +343,46 @@ class SQLiteBackend(StorageBackend):
         ) as cur:
             row = await cur.fetchone()
         return self._eng(row) if row else None
+
+    async def collection_stats(
+        self, since_hours: float = 6.0, top_n: int = 5
+    ) -> dict[str, Any]:
+        cutoff = _iso(datetime.now(UTC) - timedelta(hours=since_hours))
+        out: dict[str, Any] = {"since_hours": since_hours}
+        for key, sql in (
+            ("reels_tracked", "SELECT COUNT(*) FROM reels"),
+            ("engagement_samples", "SELECT COUNT(*) FROM engagement_samples"),
+            ("reels_with_series",
+             "SELECT COUNT(*) FROM (SELECT reel_id FROM engagement_samples "
+             "GROUP BY reel_id HAVING COUNT(*) > 1)"),
+        ):
+            async with self.db.execute(sql) as cur:
+                row = await cur.fetchone()
+            out[key] = int(row[0]) if row else 0
+        async with self.db.execute(
+            "SELECT MAX(sampled_at) FROM engagement_samples"
+        ) as cur:
+            row = await cur.fetchone()
+        out["last_sample_at"] = row[0] if row else None
+        async with self.db.execute(
+            """SELECT e.reel_id, r.permalink, r.author_handle,
+                      MAX(e.likes) - MIN(e.likes) AS delta, MAX(e.likes) AS likes,
+                      COUNT(*) AS n
+               FROM engagement_samples e JOIN reels r ON r.reel_id = e.reel_id
+               WHERE e.sampled_at >= ?
+               GROUP BY e.reel_id
+               HAVING COUNT(*) > 1 AND delta > 0
+               ORDER BY delta DESC LIMIT ?""",
+            (cutoff, top_n),
+        ) as cur:
+            rows = await cur.fetchall()
+        out["movers"] = [
+            {"reel_id": r["reel_id"], "permalink": r["permalink"],
+             "author_handle": r["author_handle"], "delta_likes": int(r["delta"]),
+             "likes": int(r["likes"]), "samples": int(r["n"])}
+            for r in rows
+        ]
+        return out
 
     @staticmethod
     def _eng(row: aiosqlite.Row) -> EngagementSample:

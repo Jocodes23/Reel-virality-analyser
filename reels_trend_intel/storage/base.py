@@ -72,6 +72,17 @@ class StorageBackend(ABC):
     @abstractmethod
     async def latest_engagement(self, reel_id: str) -> EngagementSample | None: ...
 
+    @abstractmethod
+    async def collection_stats(
+        self, since_hours: float = 6.0, top_n: int = 5
+    ) -> dict[str, Any]:
+        """Live collection telemetry: volume, freshness and biggest recent movers.
+
+        Trend-level dynamics are driven by posting times and so move slowly; this
+        exposes what is genuinely changing minute-to-minute (engagement accrual)
+        so "is the collector actually live?" is answerable at a glance.
+        """
+
     # --- embedding cache (keyed by content hash; never recompute) ----------
     @abstractmethod
     async def has_embedding(self, content_hash: str, kind: str) -> bool: ...

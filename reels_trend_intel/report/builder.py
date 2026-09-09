@@ -83,9 +83,23 @@ async def _member_reels(
     return out
 
 
+def _interactions(m: MemberReel) -> int:
+    return m.likes + m.comments + m.shares + m.saves
+
+
 def _pick_top(members: list[MemberReel], metric: str) -> MemberReel:
+    """Most-famous exemplar. Falls back to raw interactions when plays are absent.
+
+    Play counts are NOT exposed for other accounts' media by the Graph API
+    (Business Discovery returns only like/comment counts), so on live public data
+    every reel has plays=0. Without this fallback every member ties and the
+    "top" reel would be arbitrary.
+    """
     def er(m: MemberReel) -> float:
-        return (m.likes + m.comments + m.shares + m.saves) / m.plays if m.plays else 0.0
+        return _interactions(m) / m.plays if m.plays else 0.0
+
+    if not any(m.plays for m in members):
+        return max(members, key=_interactions)
     if metric == "engagement_rate":
         return max(members, key=lambda m: (er(m), m.plays))
     return max(members, key=lambda m: (m.plays, er(m)))  # peak_plays default
@@ -97,9 +111,14 @@ async def build_trend_record(
 ) -> TrendRecord:
     members = await _member_reels(storage, bt.member_ids)
     top = _pick_top(members, settings.report.top_reel_metric)
-    er = (top.likes + top.comments + top.shares + top.saves) / top.plays if top.plays else 0.0
-    why = (f"peak plays {top.plays:,}" if settings.report.top_reel_metric == "peak_plays"
-           else f"engagement rate {er:.1%}")
+    er = _interactions(top) / top.plays if top.plays else 0.0
+    if not any(m.plays for m in members):  # plays unavailable (e.g. Business Discovery)
+        why = (f"most interactions {_interactions(top):,} "
+               f"({top.likes:,} likes + {top.comments:,} comments)")
+    elif settings.report.top_reel_metric == "peak_plays":
+        why = f"peak plays {top.plays:,}"
+    else:
+        why = f"engagement rate {er:.1%}"
 
     # --- A. headline links ---
     audio_id = top.audio_id
@@ -135,8 +154,16 @@ async def build_trend_record(
     )
 
     # --- C. dynamics ---
-    peak_time = bt.first_seen + timedelta(hours=max(mod.spikem.peak_time_h, 0.0))
-    post_before = peak_time if mod.spikem.phase == "pre-peak" else now + timedelta(days=1)
+    # SpikeM can extrapolate a peak absurdly far out on sparse/irregular real
+    # adoption curves. Beyond the forecast horizon we report NO peak rather than
+    # a meaningless date (honest > confident).
+    peak_time: datetime | None = bt.first_seen + timedelta(
+        hours=max(mod.spikem.peak_time_h, 0.0))
+    horizon = now + timedelta(days=settings.models.max_forecast_days)
+    if peak_time is not None and peak_time > horizon:
+        peak_time = None
+    post_before = (peak_time if (mod.spikem.phase == "pre-peak" and peak_time)
+                   else now + timedelta(days=1))
     dynamics = Dynamics(
         phase=mod.spikem.phase, velocity=mod.emerging.velocity,
         acceleration=mod.emerging.acceleration, r_t=mod.hawkes.r_t,

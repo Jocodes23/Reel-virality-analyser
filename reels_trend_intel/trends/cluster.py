@@ -70,6 +70,7 @@ def reduce_and_cluster(matrix: np.ndarray, cfg: TrendConfig, seed: int = 1729) -
         min_cluster_size=min_cs,
         min_samples=min(cfg.hdbscan_min_samples, min_cs),
         metric="euclidean",
+        cluster_selection_method=cfg.hdbscan_cluster_selection_method,
     )
     labels = clusterer.fit_predict(reduced)
     log.info("clustered", n=n, clusters=int(labels.max() + 1 if labels.size else 0),

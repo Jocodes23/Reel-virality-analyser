@@ -74,6 +74,17 @@ class CollectionConfig(BaseModel):
     max_retries: int = 5
     # Owned-session adapter: HALT immediately on a login challenge/checkpoint.
     owned_session_halt_on_challenge: bool = True
+    # Loop cadence. A collect pass over N tracked reels takes N * (polite delay),
+    # so polling far faster than that just starves the rebuild tick (they share one
+    # storage connection) and spams "max instances reached".
+    collect_interval_s: int = 300
+    rebuild_interval_s: int = 600
+    # Graph API public discovery: hashtags (Facebook-Login tokens only) and
+    # Business-Discovery seed accounts (public Business/Creator usernames).
+    graph_hashtags: list[str] = Field(
+        default_factory=lambda: ["food", "foodreels", "recipe", "restaurant", "cooking"]
+    )
+    graph_seed_usernames: list[str] = Field(default_factory=list)
 
 
 class SamplingConfig(BaseModel):
@@ -135,6 +146,9 @@ class TrendConfig(BaseModel):
     umap_n_neighbors: int = 15
     hdbscan_min_cluster_size: int = 5
     hdbscan_min_samples: int = 3
+    # "eom" (excess of mass) can emit one huge blob on diverse real data; "leaf"
+    # yields finer, more homogeneous trends. Configurable per dataset.
+    hdbscan_cluster_selection_method: Literal["eom", "leaf"] = "eom"
     # Time bucket for adoption curve N(t).
     bucket_s: int = 3600               # 1 hour adoption buckets
     # Audio-fingerprint cluster Hamming threshold.
@@ -147,6 +161,9 @@ class ModelConfig(BaseModel):
     death_consecutive_buckets: int = 3
     # Persistence horizon N (days) for "persists >= N more days".
     persistence_horizon_days: float = 3.0
+    # Peak forecasts beyond this many days ahead are reported as unknown (None)
+    # rather than as a meaningless extrapolated date.
+    max_forecast_days: float = 60.0
     # Calibration method against history.
     calibration: Literal["isotonic", "platt", "none"] = "isotonic"
     # Hawkes power-law kernel prior (theta) and cutoff (seconds).

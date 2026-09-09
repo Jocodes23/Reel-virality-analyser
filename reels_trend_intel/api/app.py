@@ -111,6 +111,12 @@ async def health(request: Request) -> JSONResponse:
     })
 
 
+@app.get("/live")
+async def live(request: Request, since_hours: float = Query(6.0, gt=0, le=168)) -> JSONResponse:
+    """Live collection telemetry (changes minute-to-minute, unlike the report)."""
+    return JSONResponse(await request.app.state.storage.collection_stats(since_hours))
+
+
 @app.get("/metrics")
 async def metrics() -> PlainTextResponse:
     return PlainTextResponse(METRICS.render().decode(), media_type="text/plain")
@@ -122,6 +128,10 @@ async def dashboard(request: Request) -> HTMLResponse:
         payload, trends = await _latest_trends(request.app)
     except HTTPException:
         payload, trends = {"generated_at": None, "ranking_key": "health", "niche": None}, []
+    try:
+        live_stats = await request.app.state.storage.collection_stats()
+    except Exception:  # never let telemetry break the page
+        live_stats = {}
     return _TEMPLATES.TemplateResponse(request, "dashboard.html", {
-        "payload": payload, "trends": trends, "metrics": snapshot(),
+        "payload": payload, "trends": trends, "metrics": snapshot(), "live": live_stats,
     })
